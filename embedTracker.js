@@ -1,8 +1,8 @@
 (function() {
-  var BeehiivTracker = {
+  var AttributionTracker = {
     config: {
       cookieName: 'attribution_data',
-      cookieExpiry: 30, // days
+      cookieExpiry: 30,
       debugMode: false,
       childOrigin: 'https://embeds.beehiiv.com'
     },
@@ -28,7 +28,7 @@
       if (!urlParams.has('utm_source') && !urlParams.has('utm_medium')) {
         var cpc = {
           google: ['gclid', 'gclsrc', 'dclid', 'wbraid', 'gbraid', 'gad_source'],
-          meta: 'fbclid',
+          facebook: 'fbclid',
           bing: 'msclkid',
           linkedin: 'li_fat_id',
           tiktok: 'ttclid',
@@ -50,7 +50,7 @@
             
             if (hasClickId) {
               parsed.source = source;
-              parsed.medium = 'paid';
+              parsed.medium = 'cpc';
               break;
             }
           }
@@ -119,60 +119,6 @@
     },
 
     /**
-     * Get client ID from dataLayer
-     */
-    getClientIdFromDataLayer: function() {
-      var dataLayer = window.dataLayer || [];
-      for (var i = 0; i < dataLayer.length; i++) {
-        var item = dataLayer[i];
-        if (item && item['ga-client-id']) {
-          return item['ga-client-id'];
-        }
-      }
-      return null;
-    },
-
-    /**
-     * Handle messages from child iframe
-     */
-    messageHandler: function(event) {
-      var self = this;
-      
-      // Verify origin for security
-      if (event.origin !== this.config.childOrigin) return;
-      
-      // Handle initial child ready message
-      if (event.data === 'childReady') {
-        // Respond that parent is ready
-        event.source.postMessage('parentReady', event.origin);
-        
-        // Send attribution data
-        var attributionData = this.getAttributionData();
-        event.source.postMessage({
-          event: 'attribution',
-          data: attributionData
-        }, event.origin);
-        
-        // Get and send client ID if available
-        if (window.dataLayer) {
-          var clientId = this.getClientIdFromDataLayer();
-          if (clientId) {
-            event.source.postMessage({
-              event: 'clientId',
-              clientId: clientId
-            }, event.origin);
-          }
-        }
-      }
-      
-      // Push events from iframe to parent dataLayer
-      if (event.data && event.data.event) {
-        window.dataLayer = window.dataLayer || [];
-        window.dataLayer.push(event.data);
-      }
-    },
-
-    /**
      * Get attribution data from cookies
      */
     getCookie: function(name) {
@@ -196,6 +142,29 @@
       date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
       var expires = 'expires=' + date.toUTCString();
       document.cookie = name + '=' + encodeURIComponent(JSON.stringify(value)) + '; ' + expires + '; path=/';
+    },
+
+    /**
+     * Get current attribution data
+     */
+    getAttributionData: function() {
+      var params = this.parseParameters();
+      var referrerData = Object.keys(params).length === 0 ? this.parseReferrer() : {};
+      var existingData = this.getCookie(this.config.cookieName) || {};
+      
+      // If no new attribution data, return existing
+      if (Object.keys(params).length === 0 && Object.keys(referrerData).length === 0) {
+        return existingData;
+      }
+      
+      var attributionData = this.extend({}, existingData, referrerData, params, {
+        last_updated: new Date().toISOString(),
+        referrer: document.referrer,
+        landing_page: window.location.href
+      });
+
+      this.setCookie(this.config.cookieName, attributionData, this.config.cookieExpiry);
+      return attributionData;
     },
 
     /**
@@ -225,26 +194,48 @@
     },
 
     /**
-     * Get current attribution data
+     * Get client ID from dataLayer
      */
-    getAttributionData: function() {
-      var params = this.parseParameters();
-      var referrerData = Object.keys(params).length === 0 ? this.parseReferrer() : {};
-      var existingData = this.getCookie(this.config.cookieName) || {};
-      
-      // If no new attribution data, return existing
-      if (Object.keys(params).length === 0 && Object.keys(referrerData).length === 0) {
-        return existingData;
+    getClientIdFromDataLayer: function() {
+      var dataLayer = window.dataLayer || [];
+      for (var i = 0; i < dataLayer.length; i++) {
+        var item = dataLayer[i];
+        if (item && item['ga-client-id']) {
+          return item['ga-client-id'];
+        }
       }
-      
-      var attributionData = this.extend({}, existingData, referrerData, params, {
-        last_updated: new Date().toISOString(),
-        referrer: document.referrer,
-        landing_page: window.location.href
-      });
+      return null;
+    },
 
-      this.setCookie(this.config.cookieName, attributionData, this.config.cookieExpiry);
-      return attributionData;
+    /**
+     * Handle messages from child iframe
+     */
+    messageHandler: function(event) {
+      // Verify origin for security
+      if (event.origin !== this.config.childOrigin) return;
+
+      // Handle initial child ready message
+      if (event.data === 'childReady') {
+        // Respond that parent is ready
+        event.source.postMessage('parentReady', event.origin);
+
+        // Get client ID from dataLayer if available
+        if (window.dataLayer) {
+          var clientId = this.getClientIdFromDataLayer();
+          if (clientId) {
+            event.source.postMessage({
+              event: 'clientId',
+              clientId: clientId
+            }, event.origin);
+          }
+        }
+      }
+
+      // Push events from iframe to parent dataLayer
+      if (event.data && event.data.event) {
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push(event.data);
+      }
     },
 
     /**
@@ -285,33 +276,29 @@
     },
 
     /**
-     * Initialize the tracker
+     * Initialize the attribution tracking and message handling
      */
     init: function() {
-      var self = this;
-      
       try {
         if (this.config.debugMode) {
-          console.log('[BEEHIIV_TRACKER]: Initializing...');
+          console.log('[ATTRIBUTION_TRACKER]: Initializing...');
         }
+
+        // Bind message handler to maintain 'this' context
+        var boundMessageHandler = this.messageHandler.bind(this);
+        window.addEventListener('message', boundMessageHandler);
         
-        // Set up message listener
-        window.addEventListener('message', function(event) {
-          self.messageHandler.call(self, event);
-        });
-        
-        // Update iframes with attribution data
         this.updateIframes();
         
         if (this.config.debugMode) {
-          console.log('[BEEHIIV_TRACKER]: Attribution data:', this.getAttributionData());
+          console.log('[ATTRIBUTION_TRACKER]: Attribution data:', this.getAttributionData());
         }
       } catch (error) {
-        console.error('[BEEHIIV_TRACKER]: Initialization error:', error);
+        console.error('[ATTRIBUTION_TRACKER]: Initialization error:', error);
       }
     }
   };
 
   // Initialize the tracker
-  BeehiivTracker.init();
+  AttributionTracker.init();
 })();
