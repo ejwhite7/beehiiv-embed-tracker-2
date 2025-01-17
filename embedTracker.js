@@ -28,7 +28,7 @@
       if (!urlParams.has('utm_source') && !urlParams.has('utm_medium')) {
         var cpc = {
           google: ['gclid', 'gclsrc', 'dclid', 'wbraid', 'gbraid', 'gad_source'],
-          facebook: 'fbclid',
+          meta: 'fbclid',
           bing: 'msclkid',
           linkedin: 'li_fat_id',
           tiktok: 'ttclid',
@@ -50,7 +50,7 @@
             
             if (hasClickId) {
               parsed.source = source;
-              parsed.medium = 'cpc';
+              parsed.medium = 'paid';
               break;
             }
           }
